@@ -394,10 +394,10 @@ class DerivativePricer():
             calculate_error(test_estimates, test_actuals, "Test")
         plot_error()
 
-    def Monte_Carlo(self, maturity, steps, contract, contract_params, model=None, model_params=None, n_paths=10_000):
+    def Monte_Carlo(self, maturity, steps, contract, contract_params=None, model=None, model_params=None, n_paths=10_000):
         """
         Price one or more derivative contracts via Monte Carlo simulation.
-
+    
         Parameters
         ----------
         maturity : float or np.ndarray
@@ -405,123 +405,154 @@ class DerivativePricer():
         steps : int
             Number of time steps in each simulated path.
         contract : str
-            Contract type. One of 'european-call', 'european-put', 'variance-swap'.
-        contract_params : float or np.ndarray
-            Strike price(s). Must be the same length as maturity when both are arrays.
+            One of 'european-call', 'european-put', 'variance-swap', 'variance-swap-fair-strike'.
+        contract_params : float or np.ndarray, optional
+            Strike price(s) for european contracts; fixed variance strike for 'variance-swap'.
+            Must match length of maturity when both are arrays.
         model : str, optional
             Model to simulate under. Defaults to the last calibrated model.
         model_params : np.ndarray, optional
             Model parameters. Defaults to self.optimal_params.
         n_paths : int, optional
-            Number of simulated paths. Default is 10 000.
-
+            Number of simulated paths. Default is 10_000.
+    
         Returns
         -------
         float or np.ndarray
             Single price if both maturity and contract_params are scalar,
             array of prices otherwise.
-
+    
         Notes
         -----
         Paths are simulated once per unique maturity; all strikes for that
         maturity are priced from the same set of paths.
         """
-        def simulate_paths(maturity, steps, n_paths, params, model):
-            
-            def black_scholes(maturity, steps, n_paths, params):
-                sigma, = params
-                dt = maturity/steps
-                
-                dW = np.random.normal(0, dt**0.5, size = (n_paths, steps))
-                W = np.cumsum(dW, axis = 1) 
-                
-                t = np.linspace(dt, maturity, steps)
-                
-                exponent = (self.r - 0.5 * sigma**2) * t + sigma * W
-                paths = self.S0 * np.exp(exponent)
-                
-                paths = np.hstack((self.S0 * np.ones((n_paths, 1)), paths))
-                
-                return paths
     
-            
-            def heston(maturity, steps, n_paths, params):
+        # ------------------------------------------------------------------
+        # Path simulators
+        # ------------------------------------------------------------------
     
-                def corr_stand_norm_sampling(rho, steps, n_paths):
-                    Z1 = np.random.normal(size=(steps, n_paths))
-                    Z2 = np.random.normal(size=(steps, n_paths))
-                    W2 = rho * Z1 + (1 - rho**2)**0.5 * Z2
-                    return Z1, W2
-            
-                kappa, eta, theta, rho, V_0 = params
-                dt = maturity / steps
-                sqrt_dt = np.sqrt(dt)
-            
-                dW_v, dW_s = corr_stand_norm_sampling(rho, steps, n_paths)
-            
-                vol_paths   = np.zeros((steps, n_paths))
-                price_paths = np.zeros((steps, n_paths))
-                vol_paths[0]   = V_0
-                price_paths[0] = self.S0
-            
-                for t in range(steps - 1):
-                    V_t = vol_paths[t]
-                    volatility = (V_t + kappa * (theta - V_t) * dt
-                                  + eta * np.sqrt(V_t) * dW_v[t] * sqrt_dt)
-                    vol_paths[t+1] = np.maximum(volatility, -volatility) # because feller condition is not enough :/
-                    price_paths[t+1] = (price_paths[t]
-                                        * np.exp((self.r - 0.5 * V_t) * dt
-                                                 + np.sqrt(V_t) * dW_s[t] * sqrt_dt))
-            
-                return price_paths.T
-            
-            def bates(maturity, steps, n_paths, params):
-                pass
-
-            def vg(maturity, steps, n_paths, params):
-                pass
-        
-        
-            model_map = {
-                'black-scholes': black_scholes,
-                'heston': heston,
-                'bates': bates,
-                'vg': vg
-                }
-            
-            simulated_paths = model_map[model.lower()](maturity, steps, n_paths, params)
-            
-            return simulated_paths
-        
-        
-        def calc_derivative_value(price_paths, T, strikes):
-            S_T      = price_paths[:, -1]           # (n_paths,)
+        def _black_scholes(maturity, steps, n_paths, params):
+            (sigma,) = params
+            dt = maturity / steps
+    
+            dW = np.random.normal(0, dt ** 0.5, size=(n_paths, steps))
+            t  = np.linspace(dt, maturity, steps)
+    
+            exponent = (self.r - 0.5 * sigma ** 2) * t + sigma * np.cumsum(dW, axis=1)
+            paths    = self.S0 * np.exp(exponent)
+    
+            # prepend S0 column so shape is (n_paths, steps + 1)
+            return np.hstack((np.full((n_paths, 1), self.S0), paths))
+    
+    
+        def _heston(maturity, steps, n_paths, params):
+            kappa, eta, theta, rho, V0 = params
+            dt      = maturity / steps
+            sqrt_dt = np.sqrt(dt)
+    
+            # correlated Brownian increments
+            Z1 = np.random.normal(size=(steps, n_paths))
+            Z2 = np.random.normal(size=(steps, n_paths))
+            dW_v = Z1
+            dW_s = rho * Z1 + np.sqrt(1 - rho ** 2) * Z2
+    
+            vol_paths   = np.empty((steps + 1, n_paths))
+            price_paths = np.empty((steps + 1, n_paths))
+            vol_paths[0]   = V0
+            price_paths[0] = self.S0
+    
+            for t in range(steps):
+                V_t = vol_paths[t]
+                vol_paths[t + 1]   = np.abs(V_t + kappa * (theta - V_t) * dt
+                                             + eta * np.sqrt(V_t) * dW_v[t] * sqrt_dt)
+                price_paths[t + 1] = (price_paths[t]
+                                      * np.exp((self.r - 0.5 * V_t) * dt
+                                               + np.sqrt(V_t) * dW_s[t] * sqrt_dt))
+    
+            return price_paths.T  # (n_paths, steps + 1)
+    
+    
+        def _bates(maturity, steps, n_paths, params):
+            raise NotImplementedError("Bates model not yet implemented.")
+    
+    
+        def _vg(maturity, steps, n_paths, params):
+            raise NotImplementedError("Variance Gamma model not yet implemented.")
+    
+    
+        _MODEL_MAP = {
+            'black-scholes': _black_scholes,
+            'heston':        _heston,
+            'bates':         _bates,
+            'vg':            _vg,
+        }
+    
+    
+        def _simulate_paths(maturity, steps, n_paths, params, model):
+            key = model.lower()
+            if key not in _MODEL_MAP:
+                raise ValueError(f"Unknown model '{model}'. Choose from {list(_MODEL_MAP)}.")
+            return _MODEL_MAP[key](maturity, steps, n_paths, params)
+    
+    
+        # ------------------------------------------------------------------
+        # Payoff calculators
+        # ------------------------------------------------------------------
+    
+        def _calc_derivative_value(price_paths, T, strikes):
+            """
+            price_paths : (n_paths, steps + 1)
+            strikes     : 1-D array
+            """
+            S_T      = price_paths[:, -1]
             discount = np.exp(-self.r * T)
-            strikes  = np.asarray(strikes)          # (n_strikes,)
-
+            strikes  = np.asarray(strikes)
+            n = price_paths.shape[1] - 1
+    
             if contract == 'european-call':
                 payoffs = np.maximum(S_T[:, None] - strikes[None, :], 0)
+                return discount * payoffs.mean(axis=0)
+    
             elif contract == 'european-put':
                 payoffs = np.maximum(strikes[None, :] - S_T[:, None], 0)
+                return discount * payoffs.mean(axis=0)
+    
             elif contract == 'variance-swap':
-                pass  # stub
-
-            return discount * payoffs.mean(axis=0)  # (n_strikes,)
-
-
+                log_returns  = np.log(price_paths[:, 1:] / price_paths[:, :-1])
+                realised_var = (252 / n) * np.sum(log_returns ** 2, axis=1)  # (n_paths,), annualised
+            
+                payoffs = realised_var[:, None] - strikes[None, :]  # (n_paths, n_strikes)
+                return discount * payoffs.mean(axis=0)
+    
+            elif contract == 'variance-swap-fair-strike':
+                log_returns  = np.log(price_paths[:, 1:] / price_paths[:, :-1])
+                realised_var = (252 / n) * np.sum(log_returns ** 2, axis=1)  # annualised
+                
+                return np.array([realised_var.mean()])
+    
+            else:
+                raise ValueError(f"Unknown contract '{contract}'.")
+    
+    
+        # ------------------------------------------------------------------
+        # Main dispatch
+        # ------------------------------------------------------------------
+    
         model        = model or self.model
         model_params = self.optimal_params if model_params is None else model_params
-
+    
         scalar_input = np.isscalar(maturity) and np.isscalar(contract_params)
-        maturity_arr = np.atleast_1d(np.asarray(maturity,         dtype=float))
-        strikes_arr  = np.atleast_1d(np.asarray(contract_params,  dtype=float))
-
+        maturity_arr = np.atleast_1d(np.asarray(maturity,        dtype=float))
+        strikes_arr  = np.atleast_1d(np.asarray(contract_params, dtype=float))
+    
         result = np.empty(len(strikes_arr))
+    
         for T in np.unique(maturity_arr):
-            mask         = maturity_arr == T
-            price_paths  = simulate_paths(T, steps, n_paths, model_params, model)
-            result[mask] = calc_derivative_value(price_paths, T, strikes_arr[mask])
-
+            mask        = maturity_arr == T
+            price_paths = _simulate_paths(T, steps, n_paths, model_params, model)
+            result[mask] = _calc_derivative_value(price_paths, T, strikes_arr[mask])
+    
         return float(result[0]) if scalar_input else result
         
         
@@ -585,6 +616,10 @@ if __name__ == "__main__":
         
     # Calculating fair strike for a variance swap (see equation above)
     kappa, eta, theta, rho, V_0 = app.optimal_params
+    
+    fair_strikes = (1 - np.exp(-kappa * maturities)) * (V_0 - theta) / (kappa * maturities) + theta
+    fair_strike_ANAL = fair_strikes[np.isclose(maturities, 1/3)][0]
+    
     print(f"\n{'='*40}")
     print(f"{'Parameter':<15} | {'Value':>15}")
     print(f"{'-'*40}")
@@ -593,9 +628,11 @@ if __name__ == "__main__":
     print(f"{'theta':<15} | {theta:>15.4f}")
     print(f"{'rho':<15} | {rho:>15.4f}")
     print(f"{'V_0':<15} | {V_0:>15.4f}")
+    print(f"{'-'*40}")
+    print(f"{'Fair Strike':<15} | {fair_strike_ANAL:>15.4f}")
     print(f"{'='*40}")
     
-    fair_strikes = (1 - np.exp(-kappa * maturities))*(V_0 - eta) / (kappa * maturities) + eta
+    
     
     fig, ax = plt.subplots(figsize=(9, 6))
     ax.scatter(
@@ -610,5 +647,13 @@ if __name__ == "__main__":
     
     """
     
-        
+    T = 4/12
+    fair_strike_MC = app.Monte_Carlo(T, round(T*252), contract="variance-swap-fair-strike")[0]
+    print(f"Monte Carlo Fair Strike: {fair_strike_MC:.4f}")
+    
+    
+    """
+    Approach 3: Vixification
+    
+    """
     
