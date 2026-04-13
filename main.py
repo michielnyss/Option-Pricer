@@ -23,7 +23,7 @@ class DerivativePricer():
             q: float = 0):
 
         """
-        Initialise the pricer with market data and risk-free parameters.
+        Initialise the pricer with market data and fixed parameters.
 
         Parameters
         ----------
@@ -327,39 +327,41 @@ class DerivativePricer():
     
         return prices
          
-    
-    def plot_performance(self,
-                         estimates: np.ndarray, actuals: np.ndarray, strikes: np.ndarray,
-                         test_estimates: np.ndarray = None, test_actuals: np.ndarray = None, test_strikes: np.ndarray = None):
+    def plot_performance(
+        self,
+        estimates: np.ndarray,
+        actuals: np.ndarray,
+        strikes: np.ndarray,
+    ):
         """
-        Report and visualise model fit quality, optionally for train and test sets.
-
+        Report and visualise model fit quality.
+    
         Parameters
         ----------
         estimates : np.ndarray
-            Model prices (full dataset or training set).
+            Model prices.
         actuals : np.ndarray
-            Market prices (full dataset or training set).
+            Market prices.
         strikes : np.ndarray
-            Strike prices (full dataset or training set).
-        test_estimates : np.ndarray, optional
-            Model prices on the test strikes. If None, test set is omitted.
-        test_actuals : np.ndarray, optional
-            Market prices on the test strikes.
-        test_strikes : np.ndarray, optional
-            Test strike prices.
-
+            Strike prices.
+    
         Returns
         -------
         None
-            Prints SSE, MSE, RMSE and displays a scatter plot of model vs
-            market prices. If test data is provided, both sets are shown.
+            Prints SSE, MSE, RMSE, NRMSE and displays a scatter plot of model vs
+            market prices with a residual panel below.
         """
+    
+        # ------------------------------------------------------------------ #
+        #  1. Error metrics                                                    #
+        # ------------------------------------------------------------------ #
         def calculate_error(est, act, label):
-            n    = len(est)
-            SSE  = ((est - act) ** 2).sum()
-            MSE  = SSE / n
-            RMSE = MSE ** 0.5
+            n     = len(est)
+            SSE   = ((est - act) ** 2).sum()
+            MSE   = SSE / n
+            RMSE  = MSE ** 0.5
+            NRMSE = RMSE / act.mean()
+    
             print(f"\n{'='*40}")
             print(f"  {label}")
             print(f"{'='*40}")
@@ -368,33 +370,59 @@ class DerivativePricer():
             print(f"{'SSE':<15} | {SSE:>15.4f}")
             print(f"{'MSE':<15} | {MSE:>15.4f}")
             print(f"{'RMSE':<15} | {RMSE:>15.4f}")
+            print(f"{'NRMSE':<15} | {NRMSE:>15.4f}")
             print(f"{'='*40}")
-            return SSE, MSE
+    
+        calculate_error(estimates, actuals, "Calibration Set")
+    
+        # ------------------------------------------------------------------ #
+        #  2. Plot config                                                      #
+        # ------------------------------------------------------------------ #
+        plt.rcParams.update({
+            "font.family":       "serif",
+            "mathtext.fontset":  "cm",
+            "axes.spines.top":   False,
+            "axes.spines.right": False,
+        })
+    
+        fig, (ax_main, ax_res) = plt.subplots(
+            2, 1,
+            figsize=(9, 8),
+            gridspec_kw={"height_ratios": [3, 1]},
+            sharex=True,
+        )
+    
+        # ------------------------------------------------------------------ #
+        #  3. Main panel                                                       #
+        # ------------------------------------------------------------------ #
+        ax_main.scatter(strikes, actuals,
+                        facecolors="none", edgecolors="black",
+                        s=55, label="Market Prices")
+        ax_main.scatter(strikes, estimates,
+                        color="black", marker="+",
+                        s=75, label="Model Prices")
+    
+        ax_main.set_ylabel(r"Option Price $C(K)$")
+        ax_main.set_title(rf"Calibration Fit — {self.model}", pad=10)
+        ax_main.grid(True, linestyle="--", linewidth=0.6, alpha=0.6)
+        ax_main.legend(frameon=False)
+    
+        # ------------------------------------------------------------------ #
+        #  4. Residual panel                                                   #
+        # ------------------------------------------------------------------ #
+        ax_res.scatter(strikes, estimates - actuals,
+                       color="black", s=25, alpha=0.7)
+    
+        ax_res.axhline(0, color="black", linewidth=0.8, linestyle="--")
+        ax_res.set_xlabel(r"Strike $K$")
+        ax_res.set_ylabel(r"Residual $\hat{C} - C$")
+        ax_res.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
+    
+        plt.tight_layout()
+        plt.show()
 
-        def plot_error():
-            fig, ax = plt.subplots(figsize=(9, 6))
 
-            train_label = 'Train' if test_estimates is not None else ''
-            ax.scatter(strikes, actuals,   facecolors='none', edgecolors='grey',  s=50, label=f'Market {train_label}'.strip())
-            ax.scatter(strikes, estimates, color='grey', marker='+', s=60, zorder=3,    label=f'Model {train_label}'.strip())
-
-            if test_estimates is not None:
-                ax.scatter(test_strikes, test_actuals,   facecolors='none', edgecolors='black', s=50,        label='Market Test')
-                ax.scatter(test_strikes, test_estimates, color='black', marker='+', s=60, zorder=3,          label='Model Test')
-
-            ax.set_xlabel("Strike")
-            ax.set_ylabel("Option Price")
-            ax.set_title(f"Model vs Market Prices — {self.model}")
-            ax.legend()
-            plt.tight_layout()
-            plt.show()
-
-        calculate_error(estimates, actuals, "Train" if test_estimates is not None else "All data")
-        if test_estimates is not None:
-            calculate_error(test_estimates, test_actuals, "Test")
-        plot_error()
-
-    def Monte_Carlo(self, maturity, steps, contract, contract_params=None, model=None, model_params=None, n_paths=10_000):
+    def monte_carlo(self, maturity, steps, contract, contract_params=None, model=None, model_params=None, n_paths=10_000):
         """
         Price one or more derivative contracts via Monte Carlo simulation.
     
@@ -556,7 +584,120 @@ class DerivativePricer():
         return float(result[0]) if scalar_input else result
         
         
-    
+    def vixification(self,
+                        T: float,
+                        strikes: np.ndarray = None,
+                        call_prices: np.ndarray = None,
+                        put_prices: np.ndarray = None,
+                        N_strikes: int = 500) -> tuple:
+        """
+        Estimate the fair variance swap strike using the VIX replication formula.
+
+            K_var = (2*e^(rT) / T) * Σ_i [ ΔK_i / K_i² * Q(K_i, T) ] - (1/T) * (F_T/K_0 - 1)²
+
+        where Q is the put price below the forward F_T and the call price at or above it,
+        K_0 is the largest strike ≤ F_T, and ΔK_i uses the midpoint rule.
+
+        Parameters
+        ----------
+        T : float
+            Time to maturity in years.
+        strikes : np.ndarray, optional
+            Raw market strikes. If omitted, a dense grid is generated via FFT.
+        call_prices : np.ndarray, optional
+            Observed call prices aligned with ``strikes``.
+        put_prices : np.ndarray, optional
+            Observed put prices aligned with ``strikes``.
+        N_strikes : int, optional
+            Number of strikes in the synthetic dense grid (model mode only). Default 500.
+
+        Returns
+        -------
+        K_var : float
+            Fair variance swap strike (annualised variance).
+        vix : float
+            VIX-style estimate: 100 * sqrt(K_var).
+
+        Notes
+        -----
+        In raw mode, at least one of call_prices or put_prices must be provided;
+        the missing leg is derived internally via put-call parity.
+        """
+
+        F_T = self.S0 * np.exp((self.r - self.q) * T)
+
+        # ------------------------------------------------------------------
+        # Build strike grid and option prices
+        # ------------------------------------------------------------------
+
+        raw_mode = strikes is not None
+
+        if raw_mode:
+            # --- Raw market mode ------------------------------------------
+            strikes = np.asarray(strikes, dtype=float)
+
+            if call_prices is not None and put_prices is not None:
+                # Both legs provided directly — use as-is
+                calls = np.asarray(call_prices, dtype=float)
+                puts  = np.asarray(put_prices,  dtype=float)
+
+            elif call_prices is not None:
+                # Derive puts via put-call parity: P = C - S0*e^(-qT) + K*e^(-rT)
+                calls = np.asarray(call_prices, dtype=float)
+                puts  = calls - self.S0 * np.exp(-self.q * T) + strikes * np.exp(-self.r * T)
+
+            elif put_prices is not None:
+                # Derive calls via put-call parity: C = P + S0*e^(-qT) - K*e^(-rT)
+                puts  = np.asarray(put_prices, dtype=float)
+                calls = puts + self.S0 * np.exp(-self.q * T) - strikes * np.exp(-self.r * T)
+
+            else:
+                raise ValueError("Raw mode requires at least one of call_prices or put_prices.")
+
+        else:
+            # --- Model-generated mode -------------------------------------
+            strikes = np.linspace(0.5 * self.S0, 1.5 * self.S0, N_strikes)
+            char_func = self._build_char_func(self.model, T, self.optimal_params)
+            calls = self.fft_pricer(char_func, T, strikes)
+            puts  = calls - self.S0 * np.exp(-self.q * T) + strikes * np.exp(-self.r * T)
+
+        # ------------------------------------------------------------------
+        # Assign Q(K_i): put below forward, call at/above forward
+        # ------------------------------------------------------------------
+
+        Q = np.where(strikes < F_T, puts, calls)
+
+        # ------------------------------------------------------------------
+        # K_0: largest strike <= F_T
+        # ------------------------------------------------------------------
+
+        below = strikes[strikes <= F_T]
+        K_0   = below[-1] if len(below) > 0 else strikes[0]
+
+        # ------------------------------------------------------------------
+        # Strike spacings via midpoint rule
+        # ------------------------------------------------------------------
+
+        dK        = np.empty_like(strikes)
+        dK[1:-1]  = (strikes[2:] - strikes[:-2]) / 2   # interior: midpoint
+        dK[0]     = strikes[1]  - strikes[0]             # left endpoint
+        dK[-1]    = strikes[-1] - strikes[-2]            # right endpoint
+
+        # ------------------------------------------------------------------
+        # VIX replication formula
+        # ------------------------------------------------------------------
+
+        summation  = np.sum(dK / strikes ** 2 * Q)
+        correction = (F_T / K_0 - 1) ** 2
+
+        K_var = (2 * np.exp(self.r * T) / T) * summation - correction / T
+        K_var = max(K_var, 0.0)   # guard against small numerical negatives
+
+        vix = 100 * np.sqrt(K_var)
+
+        return K_var, vix
+
+
 if __name__ == "__main__":
 
     sns.set_theme(context="notebook", style="whitegrid")
@@ -588,10 +729,14 @@ if __name__ == "__main__":
 
     # To prevent local minima, we optimize (nelder-mead) with different plausible starting values
     starting_values = np.array([
-        [1.0,  0.3,  0.04,  -0.5,  0.04],
-        [2.0,  0.5,  0.06,  -0.7,  0.06],
-        [0.5,  0.2,  0.02,  -0.3,  0.02],
-    ]) # columns are respectively (kappa, eta, theta, rho, v_0)
+        [1.0, 0.3, 0.05, -0.5, 0.05], # baseline
+        [2.0, 0.5, 0.06, -0.7, 0.06], # high mean reversion + strong leverage
+        [0.5, 0.2, 0.02, -0.3, 0.02], # low-volatility regime
+        [1.5, 0.7, 0.05, -0.6, 0.05], # high vol-of-vol regime
+        [1.0, 0.3, 0.08, -0.5, 0.08], # high long-term variance
+        [1.0, 0.3, 0.04, -0.9, 0.04], # extreme correlation regime
+        [1.0, 0.3, 0.15, -0.5, 0.15], # high initial volatility regime
+    ])# columns are respectively (kappa, eta, theta, rho, v_0)
 
     # Calibrating the model:
     #   1. Define loss function using:
@@ -648,12 +793,32 @@ if __name__ == "__main__":
     """
     
     T = 4/12
-    fair_strike_MC = app.Monte_Carlo(T, round(T*252), contract="variance-swap-fair-strike")[0]
+    fair_strike_MC = app.monte_carlo(T, round(T*252), contract="variance-swap-fair-strike")[0]
     print(f"Monte Carlo Fair Strike: {fair_strike_MC:.4f}")
     
     
     """
     Approach 3: Vixification
-    
+
+        The fair variance swap strike can be approximated model-free using a
+        portfolio of European options across strikes (VIX replication formula).
+        This approach is equivalent to the CBOE methodology for computing the VIX.
     """
-    
+
+    T = 4/12
+    K_var_VIX, vix_estimate = app.vixification(T)
+    print(f"\n{'='*40}")
+    print(f"{'Vixification Fair Strike':<25} | {K_var_VIX:>10.4f}")
+    print(f"{'VIX Estimate':<25} | {vix_estimate:>10.2f}")
+    print(f"{'='*40}")
+
+    # Term structure: VIX across all available maturities
+    vix_term_structure = np.array([app.vixification(T)[1] for T in app.maturities])
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.scatter(app.maturities, vix_term_structure, color='black', s=50)
+    ax.set_xlabel("Maturity")
+    ax.set_ylabel("VIX Estimate")
+    ax.set_title("VIX Term Structure — Vixification")
+    plt.tight_layout()
+    plt.show()
