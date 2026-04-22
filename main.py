@@ -51,9 +51,9 @@ class DerivativePricer():
 
         # Group flat (price, strike) observations by unique maturity
         unique_T, idx = np.unique(maturities, return_inverse=True)
-        self.maturities    = unique_T
+        self.maturities = unique_T
         self.option_prices = [option_prices[idx == i] for i in range(len(unique_T))]
-        self.strikes       = [strikes[idx == i]        for i in range(len(unique_T))]
+        self.strikes = [strikes[idx == i] for i in range(len(unique_T))]
 
 
     def put_call_parity(self,
@@ -96,7 +96,7 @@ class DerivativePricer():
     def calibrate_model(self,
                         model: str,
                         starting_values: np.ndarray,
-                        hyper_params: list = [4096, 1.5, 0.25]):
+                        hyper_params: list = None):
         """
         Fit model parameters to observed market option prices.
 
@@ -124,8 +124,11 @@ class DerivativePricer():
         """
         
         
+        if hyper_params is None:
+            hyper_params = [4096, 1.5, 0.25]
+
         t_start = time.time()
-        
+
         self.model = model
         
         self.loss_function = self._generate_loss_function(self.model, hyper_params)
@@ -239,7 +242,7 @@ class DerivativePricer():
                 return 1e10
             total_loss = 0.0
             for i, T in enumerate(self.maturities):
-                char_func  = self._build_char_func(model, T, params)
+                char_func = self._build_char_func(model, T, params)
                 price_grid = self.fft_pricer(char_func, T, self.strikes[i], N, alpha, eta)
                 total_loss += np.sum((price_grid - self.option_prices[i]) ** 2)
             return total_loss
@@ -273,7 +276,7 @@ class DerivativePricer():
             res = minimize(self.loss_function, init_guess, method="Nelder-Mead")
             
             res_params[idx] = res.x
-            res_loss[idx]   = res.fun
+            res_loss[idx] = res.fun
             meta.append({
                 "message": res.message,
                 "nit": res.nit,
@@ -390,10 +393,10 @@ class DerivativePricer():
             market prices with a residual panel below.
         """
     
-        n     = len(estimates)
-        SSE   = ((estimates - actuals) ** 2).sum()
-        MSE   = SSE / n
-        RMSE  = MSE ** 0.5
+        n = len(estimates)
+        SSE = ((estimates - actuals) ** 2).sum()
+        MSE = SSE / n
+        RMSE = MSE ** 0.5
         NRMSE = RMSE / actuals.mean()
 
         print(f"\n{'='*40}")
@@ -409,9 +412,9 @@ class DerivativePricer():
     
 
         plt.rcParams.update({
-            "font.family":       "serif",
-            "mathtext.fontset":  "cm",
-            "axes.spines.top":   False,
+            "font.family": "serif",
+            "mathtext.fontset": "cm",
+            "axes.spines.top": False,
             "axes.spines.right": False,
         })
     
@@ -460,7 +463,7 @@ class DerivativePricer():
             Number of time steps in each simulated path.
         contract : str
             One of 'european-call', 'european-put', 'variance-swap', 'variance-swap-fair-strike'.
-        contract_params : float or np.ndarray, optional
+        strikes : float or np.ndarray, optional
             Strike price(s) for european contracts; fixed variance strike for 'variance-swap'.
             Must match length of maturity when both are arrays.
         model : str, optional
@@ -492,17 +495,17 @@ class DerivativePricer():
             dt = maturity / steps
     
             dW = np.random.normal(0, dt ** 0.5, size=(n_paths, steps)) # Brownian Motion
-            t  = np.linspace(dt, maturity, steps)
-    
+            t = np.linspace(dt, maturity, steps)
+
             exponent = (self.r - 0.5 * sigma ** 2) * t + sigma * np.cumsum(dW, axis=1)
-            paths    = self.S0 * np.exp(exponent)
+            paths = self.S0 * np.exp(exponent)
     
             return np.hstack((np.full((n_paths, 1), self.S0), paths))
     
     
         def _heston(maturity, steps, n_paths, params):
             kappa, theta, eta, rho, V0 = params
-            dt      = maturity / steps
+            dt = maturity / steps
             sqrt_dt = np.sqrt(dt)
 
             # correlated Brownian increments
@@ -511,14 +514,14 @@ class DerivativePricer():
 
             dW_s = rho * dW_v + np.sqrt(1 - rho ** 2) * Z2
 
-            vol_paths   = np.empty((steps + 1, n_paths))
+            vol_paths = np.empty((steps + 1, n_paths))
             price_paths = np.empty((steps + 1, n_paths))
-            vol_paths[0]   = V0
+            vol_paths[0] = V0
             price_paths[0] = self.S0
 
             for t in range(steps):
                 V_t = vol_paths[t]
-                vol_paths[t + 1]   = np.abs(V_t + kappa * (eta - V_t) * dt
+                vol_paths[t + 1] = np.abs(V_t + kappa * (eta - V_t) * dt
                                              + theta * np.sqrt(V_t) * dW_v[t] * sqrt_dt)
                 price_paths[t + 1] = (price_paths[t]
                                       * np.exp((self.r - 0.5 * V_t) * dt
@@ -537,7 +540,7 @@ class DerivativePricer():
     
         _MODEL_MAP = {
             'black-scholes': _black_scholes,
-            'heston':        _heston,
+            'heston': _heston,
             'bates':         _bates,
             'vg':            _vg,
         }
@@ -569,14 +572,14 @@ class DerivativePricer():
                 return discount * payoffs.mean(axis=0)
     
             elif contract == 'variance-swap':
-                log_returns  = np.log(price_paths[:, 1:] / price_paths[:, :-1])
+                log_returns = np.log(price_paths[:, 1:] / price_paths[:, :-1])
                 realised_var = (252 / n) * np.sum(log_returns ** 2, axis=1)  # (n_paths,), annualised
             
                 payoffs = realised_var[:, None] - strikes[None, :]  # (n_paths, n_strikes)
                 return discount * payoffs.mean(axis=0)
     
             elif contract == 'variance-swap-fair-strike':
-                log_returns  = np.log(price_paths[:, 1:] / price_paths[:, :-1])
+                log_returns = np.log(price_paths[:, 1:] / price_paths[:, :-1])
                 realised_var = (252 / n) * np.sum(log_returns ** 2, axis=1)  # annualised
                 
                 return np.array([realised_var.mean()])
@@ -592,22 +595,22 @@ class DerivativePricer():
             price_paths : (n_paths, steps + 1)
             """
             plt.rcParams.update({
-                "font.family":       "serif",
-                "mathtext.fontset":  "cm",
-                "axes.spines.top":   False,
+                "font.family": "serif",
+                "mathtext.fontset": "cm",
+                "axes.spines.top": False,
                 "axes.spines.right": False,
             })
 
-            n          = price_paths.shape[1] - 1
-            t_grid     = np.linspace(0, T, n + 1)
-            idx        = np.random.choice(price_paths.shape[0], size=n_display, replace=False)
-            log_ret    = np.log(price_paths[:, 1:] / price_paths[:, :-1])
-            real_var   = (252 / n) * np.sum(log_ret ** 2, axis=1)
-            K_var_mc   = real_var.mean()
+            n = price_paths.shape[1] - 1
+            t_grid = np.linspace(0, T, n + 1)
+            idx = np.random.choice(price_paths.shape[0], size=n_display, replace=False)
+            log_ret = np.log(price_paths[:, 1:] / price_paths[:, :-1])
+            real_var = (252 / n) * np.sum(log_ret ** 2, axis=1)
+            K_var_mc = real_var.mean()
 
-            S_mean  = price_paths.mean(axis=0)
+            S_mean = price_paths.mean(axis=0)
             S_upper = np.percentile(price_paths, 95, axis=0)
-            S_lower = np.percentile(price_paths,  5, axis=0)
+            S_lower = np.percentile(price_paths, 5, axis=0)
 
             fig, (ax_paths, ax_hist) = plt.subplots(
                 1, 2, figsize=(14, 5),
@@ -653,17 +656,17 @@ class DerivativePricer():
             plt.show()
 
 
-        model        = model or self.model
+        model = model or self.model
         model_params = self.optimal_params if model_params is None else model_params
 
         scalar_input = np.isscalar(maturity) and np.isscalar(strikes)
         maturity_arr = np.atleast_1d(np.asarray(maturity, dtype=float))
-        strikes_arr  = np.atleast_1d(np.asarray(strikes, dtype=float))
+        strikes_arr = np.atleast_1d(np.asarray(strikes, dtype=float))
 
         result = np.empty(len(strikes_arr))
 
         for T in np.unique(maturity_arr):
-            mask        = maturity_arr == T
+            mask = maturity_arr == T
             price_paths = _simulate_paths(T, steps, n_paths, model_params, model)
             if plot:
                 _plot_paths(price_paths, T)
@@ -727,14 +730,14 @@ class DerivativePricer():
             if call_prices is not None and put_prices is not None:
                 # Both legs provided directly — use as-is
                 calls = np.asarray(call_prices, dtype=float)
-                puts  = np.asarray(put_prices,  dtype=float)
+                puts = np.asarray(put_prices, dtype=float)
 
             elif call_prices is not None:
                 calls = np.asarray(call_prices, dtype=float)
-                puts  = self.put_call_parity(T, strikes, calls=calls)
+                puts = self.put_call_parity(T, strikes, calls=calls)
 
             elif put_prices is not None:
-                puts  = np.asarray(put_prices, dtype=float)
+                puts = np.asarray(put_prices, dtype=float)
                 calls = self.put_call_parity(T, strikes, puts=puts)
 
             else:
@@ -745,23 +748,23 @@ class DerivativePricer():
             strikes = np.linspace(0.5 * self.S0, 1.5 * self.S0, N_strikes)
             char_func = self._build_char_func(self.model, T, self.optimal_params)
             calls = self.fft_pricer(char_func, T, strikes)
-            puts  = self.put_call_parity(T, strikes, calls=calls)
+            puts = self.put_call_parity(T, strikes, calls=calls)
 
         # Assign Q(K_i): put below forward, call at/above forward
         Q = np.where(strikes < F_T, puts, calls)
 
         # K_0: largest strike <= F_T
         below = strikes[strikes <= F_T]
-        K_0   = below[-1] if len(below) > 0 else strikes[0]
+        K_0 = below[-1] if len(below) > 0 else strikes[0]
 
         # Strike spacings via midpoint rule
-        dK        = np.empty_like(strikes)
-        dK[1:-1]  = (strikes[2:] - strikes[:-2]) / 2   # interior: midpoint
-        dK[0]     = strikes[1]  - strikes[0]             # left endpoint
-        dK[-1]    = strikes[-1] - strikes[-2]            # right endpoint
+        dK = np.empty_like(strikes)
+        dK[1:-1] = (strikes[2:] - strikes[:-2]) / 2  # interior: midpoint
+        dK[0] = strikes[1] - strikes[0]               # left endpoint
+        dK[-1] = strikes[-1] - strikes[-2]            # right endpoint
 
         # VIX replication formula
-        summation  = np.sum(dK / strikes ** 2 * Q)
+        summation = np.sum(dK / strikes ** 2 * Q)
         correction = (F_T / K_0 - 1) ** 2
 
         K_var = (2 * np.exp(self.r * T) / T) * summation - correction / T
@@ -779,10 +782,10 @@ if __name__ == "__main__":
 
     data = pd.read_csv("Data.csv")
     S0 = 100
-    r  = 0.05
+    r = 0.05
 
-    prices     = data["Prices"].to_numpy()
-    strikes    = data["Strikes"].to_numpy()
+    prices = data["Prices"].to_numpy()
+    strikes = data["Strikes"].to_numpy()
     maturities = data["Maturities"].to_numpy()
 
     # Approach 1: Analytical Approximation
@@ -792,16 +795,16 @@ if __name__ == "__main__":
     
     # Initialize with option data
     app = DerivativePricer(
-        option_prices = prices,
-        strikes       = strikes,
-        maturities    = maturities,
-        S0 = S0,
-        r  = r,
+        option_prices=prices,
+        strikes=strikes,
+        maturities=maturities,
+        S0=S0,
+        r=r,
     )
 
     # To prevent local minima, we optimize (nelder-mead) with different plausible starting values
     starting_values = np.array([
-        [1.0, 0.3, 0.05, -0.5, 0.05], # baseline
+        [1.0, 0.3, 0.04, -0.5, 0.04], # baseline
         [2.0, 0.5, 0.06, -0.7, 0.06], # high mean reversion + strong leverage
         [0.5, 0.2, 0.02, -0.3, 0.02], # low-volatility regime
         [1.5, 0.7, 0.05, -0.6, 0.05], # high vol-of-vol regime
@@ -812,7 +815,7 @@ if __name__ == "__main__":
 
     # Calibrating the model:
     #   1. Define loss function using:
-    #       - Relevant characteristique (in the case, Heston)
+    #       - Relevant characteristic function (in this case, Heston)
     #       - Fast Fourier Transform, for ... faster calculations
     #       - MSE to evaluate loss
     #   2. Optimize using Nelder-Mead for different starting points
@@ -827,9 +830,9 @@ if __name__ == "__main__":
 
     # Plotting performance
     app.plot_performance(
-        estimates = call_prices, 
-        actuals = prices, 
-        strikes = strikes)
+        estimates=call_prices,
+        actuals=prices,
+        strikes=strikes)
         
     # Calculating fair strike for a variance swap (see equation above)
     kappa, theta, eta, rho, V_0 = app.optimal_params
@@ -853,12 +856,14 @@ if __name__ == "__main__":
     
     fig, ax = plt.subplots(figsize=(9, 6))
     ax.scatter(
-        maturities, fair_strikes, 
-        color = 'black', s=50)
+        maturities, fair_strikes,
+        color='black', s=50)
     ax.set_xlabel("Maturity")
     ax.set_ylabel("Strike")
     ax.set_title("Fair value of variance swap")
-    
+    plt.tight_layout()
+    plt.show()
+
     """
     Approach 2: Monte Carlo
     
@@ -866,7 +871,9 @@ if __name__ == "__main__":
     
     T = 4/12
     fair_strike_MC = app.monte_carlo(T, round(T*252), contract="variance-swap-fair-strike", plot=True)[0]
-    print(f"Monte Carlo Fair Strike: {fair_strike_MC:.4f}")
+    print(f"\n{'='*40}")
+    print(f"{'Monte Carlo Fair Strike':<25} | {fair_strike_MC:>10.4f}")
+    print(f"{'='*40}")
     
     """
     Approach 3: Vixification
